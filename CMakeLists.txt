@@ -1,13 +1,18 @@
-project( SimpleDBSCAN )
-cmake_minimum_required( VERSION 3.5 )
+cmake_minimum_required(VERSION 3.14.3)
 
-set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11" )
+project(dbscan)
 
-set(SOURCES 
-    dbscan.h
-    kdtree.cpp
-    kdtree.h
-    main.cpp
+add_library(dbscan STATIC
+    include/dbscan.h
+    include/kdtree.h
+    src/kdtree.cpp)
+
+target_include_directories(dbscan PUBLIC include)
+
+
+set_target_properties( dbscan
+    PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/lib"
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin"
 )
-
-add_executable(dbscan_example ${SOURCES})
