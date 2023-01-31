@@ -14,11 +14,13 @@
 #ifndef __DBSCAN_H__
 #define __DBSCAN_H__
 
-#include <vector>
+#include "gp/signals/event_trigger.hpp"
+
+#include <functional>
+#include <memory>
 #include <queue>
 #include <set>
-#include <memory>
-#include <functional>
+#include <vector>
 
 #if !BRUTEFORCE
 /*
@@ -39,8 +41,9 @@ struct vec3f
     }
 };
 
-//! type T must be a vector-like container and MUST SUPPORT operator[] for iteration
-//! Float can be float ,double ,int or any other number type but MUST SUPPORT implicitly convert to double type
+//! type T must be a vector-like container and MUST SUPPORT operator[] for
+//! iteration Float can be float ,double ,int or any other number type but MUST
+//! SUPPORT implicitly convert to double type
 template<typename T, typename Float>
 class DBSCAN final
 {
@@ -63,25 +66,34 @@ public:
     }
 
     /**
-     * @describe: Run DBSCAN clustering alogrithm
-     * @param: V {std::vector<T>} : data
-     * @param: dim {unsigned int} : dimension of T (a vector-like struct)
-     * @param: eps {Float} : epsilon or in other words, radian
-     * @param: min {unsigned int} : minimal number of points in epsilon radian, then the point is cluster core point
-     * @param: disfunc {DistanceFunc} : !!!! only used in bruteforce mode. Distance function recall. Euclidian distance is recommanded, but you can replace it by any metric
-     * measurement function
-     * @usage: Object.Run() and get the cluster and noise indices from this->Clusters & this->Noise.
-     * @pitfall: If you set big eps(search range) and huge density V, then kdtree will be a bottleneck of performance
-     * @pitfall: You MUST ensure the data's identicality (TVector* V) during Run(), because DBSCAN just use the reference of data passed in.
-     * @TODO: customize kdtree algorithm or rewrite it ,stop further searching when minimal number which indicates cluster core point condition is satisfied
-     */
+   * @describe: Run DBSCAN clustering alogrithm
+   * @param: V {std::vector<T>} : data
+   * @param: dim {unsigned int} : dimension of T (a vector-like struct)
+   * @param: eps {Float} : epsilon or in other words, radian
+   * @param: min {unsigned int} : minimal number of points in epsilon radian,
+   * then the point is cluster core point
+   * @param: disfunc {DistanceFunc} : !!!! only used in bruteforce mode.
+   * Distance function recall. Euclidian distance is recommanded, but you can
+   * replace it by any metric measurement function
+   * @param: signals {gp::signals::Signals} : Callback to propagate signals across workflow.
+   * @usage: Object.Run() and get the cluster and noise indices from
+   * this->Clusters & this->Noise.
+   * @pitfall: If you set big eps(search range) and huge density V, then kdtree
+   * will be a bottleneck of performance
+   * @pitfall: You MUST ensure the data's identicality (TVector* V) during
+   * Run(), because DBSCAN just use the reference of data passed in.
+   * @TODO: customize kdtree algorithm or rewrite it ,stop further searching
+   * when minimal number which indicates cluster core point condition is
+   * satisfied
+   */
     int Run(
-        TVector *V, const int32_t dim, const Float eps, const int32_t min, const DistanceFunc &disfunc = [](const T &t1, const T &t2) -> Float { return 0; });
+        TVector *V, const int32_t dim, const Float eps, const int32_t min, const DistanceFunc &disfunc = [](const T &t1, const T &t2) -> Float { return 0; },
+        const gp::signals::Signals &signals = {});
 
 private:
-    std::vector<int32_t> regionQuery(const int32_t pid) const;
+    std::vector<int32_t> regionQuery(const int32_t pid, const gp::signals::Signals &signals) const;
     void addToCluster(const int32_t pid, const int32_t cid);
-    void expandCluster(const int32_t cid, const std::vector<int32_t> &neighbors);
+    void expandCluster(const int32_t cid, const std::vector<int32_t> &neighbors, const gp::signals::Signals &signals);
     void addToBorderSet(const int32_t pid)
     {
         this->_borderset.insert(pid);
@@ -89,13 +101,15 @@ private:
     void addToBorderSet(const std::vector<int32_t> &pids)
     {
         for (int32_t pid : pids)
+        {
             this->_borderset.insert(pid);
+        }
     }
     bool isInBorderSet(const int32_t pid) const
     {
         return this->_borderset.end() != this->_borderset.find(pid);
     }
-    void buildKdtree(const TVector *V);
+    void buildKdtree(const TVector *V, const gp::signals::Signals &signals);
     void destroyKdtree();
 
 public:
@@ -121,7 +135,7 @@ private:
 };
 
 template<typename T, typename Float>
-int DBSCAN<T, Float>::Run(TVector *V, const int32_t dim, const Float eps, const int32_t min, const DistanceFunc &disfunc)
+int DBSCAN<T, Float>::Run(TVector *V, const int32_t dim, const Float eps, const int32_t min, const DistanceFunc &disfunc, const gp::signals::Signals &signals)
 {
     // Validate
     if (V->size() < 1)
@@ -145,11 +159,12 @@ int DBSCAN<T, Float>::Run(TVector *V, const int32_t dim, const Float eps, const 
 
 #if BRUTEFORCE
 #else
-    this->buildKdtree(this->_data);
+    this->buildKdtree(this->_data, signals);
 #endif // !BRUTEFORCE
 
     for (int32_t pid = 0; pid < this->_datalen; ++pid)
     {
+        gp::signals::checkStopSignalAndThrow(signals);
         // Check if point forms a cluster
         this->_borderset.clear();
         if (!this->_visited[pid])
@@ -157,7 +172,7 @@ int DBSCAN<T, Float>::Run(TVector *V, const int32_t dim, const Float eps, const 
             this->_visited[pid] = true;
 
             // Outliner it maybe noise or on the border of one cluster.
-            const std::vector<int32_t> neightbors = this->regionQuery(pid);
+            const std::vector<int32_t> neightbors = this->regionQuery(pid, signals);
             if (neightbors.size() < this->_minpts)
             {
                 continue;
@@ -169,13 +184,14 @@ int DBSCAN<T, Float>::Run(TVector *V, const int32_t dim, const Float eps, const 
                 // first blood
                 this->addToBorderSet(pid);
                 this->addToCluster(pid, cid);
-                this->expandCluster(cid, neightbors);
+                this->expandCluster(cid, neightbors, signals);
             }
         }
     }
 
     for (int32_t pid = 0; pid < this->_datalen; ++pid)
     {
+        gp::signals::checkStopSignalAndThrow(signals);
         if (!this->_assigned[pid])
         {
             this->Noise.push_back(pid);
@@ -197,12 +213,13 @@ void DBSCAN<T, Float>::destroyKdtree()
 }
 
 template<typename T, typename Float>
-void DBSCAN<T, Float>::buildKdtree(const TVector *V)
+void DBSCAN<T, Float>::buildKdtree(const TVector *V, const gp::signals::Signals &signals)
 {
     this->_kdtree = kd_create((int)this->_datadim);
     std::unique_ptr<double[]> v(new double[this->_datadim]);
     for (int32_t r = 0; r < this->_datalen; ++r)
     {
+        gp::signals::checkStopSignalAndThrow(signals);
         // kdtree only support double type
         for (int32_t c = 0; c < this->_datadim; ++c)
         {
@@ -213,7 +230,7 @@ void DBSCAN<T, Float>::buildKdtree(const TVector *V)
 }
 
 template<typename T, typename Float>
-std::vector<int32_t> DBSCAN<T, Float>::regionQuery(const int32_t pid) const
+std::vector<int32_t> DBSCAN<T, Float>::regionQuery(const int32_t pid, const gp::signals::Signals &signals) const
 {
     std::vector<int32_t> neighbors;
 
@@ -231,6 +248,7 @@ std::vector<int32_t> DBSCAN<T, Float>::regionQuery(const int32_t pid) const
     kdres *presults = kd_nearest_range(this->_kdtree, v.get(), this->_epsilon);
     while (!kd_res_end(presults))
     {
+        gp::signals::checkStopSignalAndThrow(signals);
         /* get the data and position of the current result item */
         T *pch = (T *)kd_res_item(presults, v.get());
         int32_t pnpid = (int32_t)(pch - &(*this->_data)[0]);
@@ -247,15 +265,17 @@ std::vector<int32_t> DBSCAN<T, Float>::regionQuery(const int32_t pid) const
 }
 
 template<typename T, typename Float>
-void DBSCAN<T, Float>::expandCluster(const int32_t cid, const std::vector<int32_t> &neighbors)
+void DBSCAN<T, Float>::expandCluster(const int32_t cid, const std::vector<int32_t> &neighbors, const gp::signals::Signals &signals)
 {
-    std::queue<int32_t> border; // it has unvisited , visited unassigned pts. visited assigned will not appear
+    std::queue<int32_t> border; // it has unvisited , visited unassigned pts.
+                                // visited assigned will not appear
     for (int32_t pid : neighbors)
         border.push(pid);
     this->addToBorderSet(neighbors);
 
     while (border.size() > 0)
     {
+        gp::signals::checkStopSignalAndThrow(signals);
         const int32_t pid = border.front();
         border.pop();
 
@@ -263,7 +283,7 @@ void DBSCAN<T, Float>::expandCluster(const int32_t cid, const std::vector<int32_
         {
             // not been visited, great! , hurry to mark it visited
             this->_visited[pid] = true;
-            const std::vector<int32_t> pidneighbors = this->regionQuery(pid);
+            const std::vector<int32_t> pidneighbors = this->regionQuery(pid, signals);
 
             // Core point, the neighbors will be expanded
             if (pidneighbors.size() >= this->_minpts)
