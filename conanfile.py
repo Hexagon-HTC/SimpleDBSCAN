@@ -3,7 +3,7 @@ from conan.tools.cmake import CMakeToolchain, CMake
 
 class SimpleDBSCANConan(ConanFile):
     name = "SimpleDBSCAN"
-    version = "1.0"
+    version = "1.1"
     license = "MIT"
     author = "CallmeNezha"
     description = "Implementation of dbscan algorithms using own implemented kdtree instance. Deepsense have slightly modified kd tree parameters to gain better performance and results"
